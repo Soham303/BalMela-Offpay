@@ -13,9 +13,10 @@ import {
 interface NavbarProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
+  onOpenAttendeeWallet?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => {
+export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpenAttendeeWallet }) => {
   const { user, logout, isOffline } = useAuth();
 
   if (!user) return null;
@@ -132,6 +133,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
               </span>
             )}
           </div>
+
+          {onOpenAttendeeWallet && (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={onOpenAttendeeWallet}
+              title="Switch to Attendee Pass Wallet"
+              style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+            >
+              <Ticket size={14} />
+              <span>Attendee Wallet</span>
+            </button>
+          )}
 
           <button
             className="nav-btn"

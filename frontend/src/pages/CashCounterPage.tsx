@@ -10,7 +10,9 @@ import {
   Receipt, 
   Trash2, 
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  ExternalLink,
+  Copy
 } from 'lucide-react';
 
 interface Issuance {
@@ -83,7 +85,8 @@ export const CashCounterPage: React.FC = () => {
   // Render QR code to canvas whenever a pass is issued
   useEffect(() => {
     if (successResult && qrCanvasRef.current) {
-      QRCode.toCanvas(qrCanvasRef.current, successResult.qr_payload, {
+      const attendeeUrl = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
+      QRCode.toCanvas(qrCanvasRef.current, attendeeUrl, {
         width: 240,
         margin: 2,
         color: {
@@ -216,9 +219,40 @@ export const CashCounterPage: React.FC = () => {
                 <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.35rem' }}>
                   Cash Received: ₹{successResult.issuance.cash_received}
                 </div>
+                <div style={{ fontSize: '0.75rem', color: '#6366f1', marginTop: '0.35rem', fontWeight: 600 }}>
+                  Scan with phone camera to load your pass
+                </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '1rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
+                    window.open(url, '_blank');
+                  }}
+                  title="Open Attendee Pass in New Tab"
+                >
+                  <ExternalLink size={16} />
+                  Open Pass (Demo)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
+                    navigator.clipboard.writeText(url);
+                    alert('Attendee pass link copied to clipboard!');
+                  }}
+                  title="Copy pass link"
+                >
+                  <Copy size={16} />
+                  Copy Pass Link
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
                 <button
                   type="button"
                   className="btn btn-outline"

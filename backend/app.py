@@ -30,11 +30,13 @@ def create_app(config_class=None):
     from backend.routes.system_routes import system_bp
     from backend.routes.stall_routes import stall_bp
     from backend.routes.admin_routes import admin_bp
+    from backend.routes.pass_routes import pass_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(counter_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(stall_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(pass_bp)
 
     # Database Session Teardown
     @app.teardown_appcontext

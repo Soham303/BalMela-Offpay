@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth, type User } from '../context/AuthContext';
 import { apiRequest } from '../api';
-import { Ticket, Lock, User as UserIcon, AlertCircle, ArrowRight } from 'lucide-react';
+import { Ticket, Lock, User as UserIcon, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
 
-export const LoginPage: React.FC = () => {
+interface LoginPageProps {
+  onOpenAttendeeWallet?: () => void;
+}
+
+export const LoginPage: React.FC<LoginPageProps> = ({ onOpenAttendeeWallet }) => {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -148,6 +152,30 @@ export const LoginPage: React.FC = () => {
             {!isLoading && <ArrowRight size={18} />}
           </button>
         </form>
+
+        {onOpenAttendeeWallet && (
+          <div style={{
+            marginTop: '1.5rem',
+            padding: '1rem',
+            background: 'rgba(99, 102, 241, 0.08)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            borderRadius: 'var(--radius-md)',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '0.825rem', color: '#c7d2fe', marginBottom: '0.5rem', fontWeight: 500 }}>
+              Visiting the Festival?
+            </div>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              style={{ width: '100%', borderColor: '#6366f1', color: '#e0e7ff', display: 'flex', justifyContent: 'center', gap: '0.5rem' }}
+              onClick={onOpenAttendeeWallet}
+            >
+              <Sparkles size={16} />
+              Open My Token Pass / Wallet
+            </button>
+          </div>
+        )}
 
         <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-subtle)' }}>
           <div style={{
