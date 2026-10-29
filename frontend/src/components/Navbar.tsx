@@ -7,7 +7,6 @@ import {
   Users, 
   LogOut, 
   WifiOff, 
-  ShieldCheck, 
   Ticket 
 } from 'lucide-react';
 

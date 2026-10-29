@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { useAuth, User } from '../context/AuthContext';
+import { useAuth, type User } from '../context/AuthContext';
 import { apiRequest } from '../api';
-import { Ticket, Lock, User as UserIcon, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Ticket, Lock, User as UserIcon, AlertCircle, ArrowRight } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
