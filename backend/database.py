@@ -42,6 +42,8 @@ def init_db(database_uri, echo=False):
 
 
 def get_db():
+    global db_session
     if db_session is None:
-        raise RuntimeError("Database not initialized. Call init_db() first.")
+        from backend.config import Config
+        init_db(Config.SQLALCHEMY_DATABASE_URI)
     return db_session

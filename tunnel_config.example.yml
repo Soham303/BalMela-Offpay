@@ -1,0 +1,12 @@
+# Cloudflare Tunnel Configuration Template (PRD Section 7.4)
+# Run: cloudflared tunnel run festtoken-tunnel
+
+tunnel: <YOUR-TUNNEL-UUID>
+credentials-file: /home/soham303/.cloudflared/<YOUR-TUNNEL-UUID>.json
+
+ingress:
+  # Route traffic to the local FestToken service
+  - hostname: tokens.mycollegefest.org
+    service: http://127.0.0.1:5000
+  # Default catch-all
+  - service: http_status:404

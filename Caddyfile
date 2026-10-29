@@ -1,0 +1,27 @@
+# FestToken Event-Day Caddyfile Configuration
+# Listens on port 8080 or domain, proxies /api/* to Gunicorn/Flask, serves React dist
+
+:8080 {
+    # Logging
+    log {
+        output file ./festtoken_access.log
+        format console
+    }
+
+    # API Proxy
+    handle /api/* {
+        reverse_proxy 127.0.0.1:5000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Static Frontend
+    handle {
+        root * ./frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+}
