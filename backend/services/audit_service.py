@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from backend.database import get_db
 from backend.models import AuditLog
 
-def log_audit(action: str, entity_type: str, actor_id=None, entity_id=None, metadata=None):
-    session = get_db()
+def log_audit(action: str, entity_type: str, actor_id=None, entity_id=None, metadata=None, session=None, commit=True):
+    if session is None:
+        session = get_db()
     meta_str = None
     if metadata is not None:
         try:
@@ -21,5 +22,7 @@ def log_audit(action: str, entity_type: str, actor_id=None, entity_id=None, meta
         created_at=datetime.now(timezone.utc),
     )
     session.add(audit)
-    session.commit()
+    if commit:
+        session.commit()
     return audit
+

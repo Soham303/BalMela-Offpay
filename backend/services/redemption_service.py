@@ -95,7 +95,7 @@ def process_redemption(
 
     cred_hash = hash_secret(secret)
 
-    # 5. Acquire row-level lock on the TokenPass to prevent concurrent double-spending race conditions
+    # 5. Check pass exists and is active
     pass_obj = (
         session.query(TokenPass)
         .filter_by(public_pass_id=public_pass_id.strip(), credential_hash=cred_hash)
@@ -109,13 +109,26 @@ def process_redemption(
     if pass_obj.status != "active":
         raise ValueError(f"Pass cannot be redeemed because its status is '{pass_obj.status}'.")
 
-    if pass_obj.remaining_value < amount:
+    # 6. Atomic conditional update: guarantees concurrent double-spending cannot occur
+    rows_updated = (
+        session.query(TokenPass)
+        .filter(
+            TokenPass.id == pass_obj.id,
+            TokenPass.status == "active",
+            TokenPass.remaining_value >= amount,
+        )
+        .update(
+            {TokenPass.remaining_value: TokenPass.remaining_value - amount},
+            synchronize_session="fetch",
+        )
+    )
+
+    if rows_updated == 0:
+        session.refresh(pass_obj)
         raise ValueError(
             f"Insufficient token balance. Requested: {amount}, Available: {pass_obj.remaining_value}."
         )
 
-    # 6. Atomically deduct balance
-    pass_obj.remaining_value -= amount
     if pass_obj.remaining_value == 0:
         pass_obj.status = "exhausted"
 
@@ -130,6 +143,25 @@ def process_redemption(
         created_at=datetime.now(timezone.utc),
     )
     session.add(redemption)
+    session.flush()
+
+    # 8. Record audit log in the SAME atomic transaction
+    log_audit(
+        action="REDEEM_TOKEN",
+        entity_type="REDEMPTION",
+        actor_id=operator_id,
+        entity_id=redemption.id,
+        metadata={
+            "stall_id": stall_id,
+            "stall_code": stall.stall_code,
+            "amount": amount,
+            "pass_id": pass_obj.public_pass_id,
+            "remaining_value": pass_obj.remaining_value,
+            "idempotency_key": idempotency_key,
+        },
+        session=session,
+        commit=False,
+    )
 
     try:
         session.commit()
@@ -145,22 +177,6 @@ def process_redemption(
                 "is_duplicate_retry": True,
             }
         raise ValueError("Integrity error processing redemption.")
-
-    # 8. Audit log
-    log_audit(
-        action="REDEEM_TOKEN",
-        entity_type="REDEMPTION",
-        actor_id=operator_id,
-        entity_id=redemption.id,
-        metadata={
-            "stall_id": stall_id,
-            "stall_code": stall.stall_code,
-            "amount": amount,
-            "pass_id": pass_obj.public_pass_id,
-            "remaining_value": pass_obj.remaining_value,
-            "idempotency_key": idempotency_key,
-        },
-    )
 
     return {
         "message": "Redemption successful",

@@ -44,6 +44,13 @@ def init_db(database_uri, echo=False):
 def get_db():
     global db_session
     if db_session is None:
+        from flask import current_app
+        try:
+            if current_app and "SQLALCHEMY_DATABASE_URI" in current_app.config:
+                init_db(current_app.config["SQLALCHEMY_DATABASE_URI"])
+                return db_session
+        except Exception:
+            pass
         from backend.config import Config
         init_db(Config.SQLALCHEMY_DATABASE_URI)
     return db_session
