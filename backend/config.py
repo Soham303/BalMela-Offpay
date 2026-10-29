@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 class Config:
+    BASE_DIR = BASE_DIR
     SECRET_KEY = os.getenv("SECRET_KEY", "festtoken-dev-secret-key-change-in-production-2026")
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "festtoken-jwt-secret-key-change-in-production-2026")
     JWT_ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "480"))
