@@ -26,7 +26,11 @@ def create_app(config_class=None):
 
     # Register Blueprints
     from backend.routes.auth_routes import auth_bp
+    from backend.routes.counter_routes import counter_bp
+    from backend.routes.system_routes import system_bp
     app.register_blueprint(auth_bp)
+    app.register_blueprint(counter_bp)
+    app.register_blueprint(system_bp)
 
     # Database Session Teardown
     @app.teardown_appcontext
