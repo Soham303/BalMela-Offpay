@@ -30,5 +30,5 @@ class ProductionConfig(Config):
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-    JWT_SECRET_KEY = "test-jwt-secret-key"
-    SECRET_KEY = "test-secret-key"
+    JWT_SECRET_KEY = "test-jwt-secret-key-minimum-32-bytes-long-for-hmac"
+    SECRET_KEY = "test-secret-key-minimum-32-bytes-long"
