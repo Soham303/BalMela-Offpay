@@ -100,3 +100,49 @@ def test_lookup_and_topup_flow(test_setup):
     assert summary["total_tokens_given"] == 200
     assert summary["total_issuances_count"] == 2
     assert summary["total_passes_count"] == 1
+
+def test_issue_with_scanned_qr_and_custom_card_id(test_setup):
+    client, cashier_token, session = test_setup
+
+    # 1. Issue with scanned pre-printed QR payload
+    res = client.post(
+        "/api/counter/issue",
+        headers={"Authorization": f"Bearer {cashier_token}"},
+        json={
+            "cash_received": 100,
+            "attendee_name": "Rohan Badge",
+            "scanned_qr_payload": "FEST:PASS-PREPRINTED01:custom_secret_123"
+        }
+    )
+    assert res.status_code == 201
+    data = res.get_json()
+    assert data["token_pass"]["public_pass_id"] == "PASS-PREPRINTED01"
+    assert data["token_pass"]["attendee_name"] == "Rohan Badge"
+    assert data["token_pass"]["remaining_value"] == 100
+
+    # 2. Try to issue with same ID -> should reject because it's already active
+    res_dup = client.post(
+        "/api/counter/issue",
+        headers={"Authorization": f"Bearer {cashier_token}"},
+        json={
+            "cash_received": 50,
+            "custom_pass_id": "PASS-PREPRINTED01"
+        }
+    )
+    assert res_dup.status_code == 400
+    assert "already initialized" in res_dup.get_json()["error"]
+
+    # 3. Issue with physical card barcode/ID
+    res_card = client.post(
+        "/api/counter/issue",
+        headers={"Authorization": f"Bearer {cashier_token}"},
+        json={
+            "cash_received": 250,
+            "attendee_name": "Meera Wristband",
+            "custom_pass_id": "WRIST-5501"
+        }
+    )
+    assert res_card.status_code == 201
+    card_data = res_card.get_json()
+    assert card_data["token_pass"]["public_pass_id"] == "WRIST-5501"
+    assert card_data["token_pass"]["remaining_value"] == 250

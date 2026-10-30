@@ -12,7 +12,14 @@ from backend.services.pass_service import (
 )
 from backend.services.audit_service import log_audit
 
-def issue_token_pass(cashier_id: int, cash_received: float, token_value: int = None, attendee_name: str = None):
+def issue_token_pass(
+    cashier_id: int, 
+    cash_received: float, 
+    token_value: int = None, 
+    attendee_name: str = None,
+    scanned_qr_payload: str = None,
+    custom_pass_id: str = None,
+):
     session = get_db()
     
     # 1. Fetch system config
@@ -40,11 +47,31 @@ def issue_token_pass(cashier_id: int, cash_received: float, token_value: int = N
     if not config.issuance_started:
         config.issuance_started = True
 
-    # 2. Generate pass credentials
-    public_id = generate_public_pass_id()
-    secret = generate_secret()
-    cred_hash = hash_secret(secret)
+    # 2. Determine Pass Credentials (Scanned QR, Custom Pass ID, or Auto-Generated)
+    public_id = None
+    secret = None
 
+    if scanned_qr_payload and scanned_qr_payload.strip():
+        parsed_id, parsed_secret = parse_qr_payload(scanned_qr_payload.strip())
+        if parsed_id:
+            public_id = parsed_id
+            secret = parsed_secret or generate_secret()
+        else:
+            public_id = scanned_qr_payload.strip()
+            secret = generate_secret()
+    elif custom_pass_id and custom_pass_id.strip():
+        public_id = custom_pass_id.strip()
+        secret = generate_secret()
+    else:
+        public_id = generate_public_pass_id()
+        secret = generate_secret()
+
+    # Verify pass does not already exist
+    existing = session.query(TokenPass).filter_by(public_pass_id=public_id).first()
+    if existing:
+        raise ValueError(f"Pass '{public_id}' is already initialized with {existing.remaining_value} tokens. Please use the 'Top-Up Existing Pass' tab to add more credits.")
+
+    cred_hash = hash_secret(secret)
     clean_name = attendee_name.strip() if attendee_name and attendee_name.strip() else None
 
     # 3. Create TokenPass

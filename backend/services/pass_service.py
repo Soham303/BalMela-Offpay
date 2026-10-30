@@ -37,13 +37,15 @@ def parse_qr_payload(payload: str):
         params = urllib.parse.parse_qs(query_string)
         pass_id = params.get("id", [None])[0]
         secret = params.get("secret", [None])[0]
-        if pass_id and secret:
-            return pass_id.strip(), secret.strip()
+        if pass_id:
+            return pass_id.strip(), secret.strip() if secret else None
 
     parts = payload.split(":")
     if len(parts) == 3 and parts[0] == "FEST":
         return parts[1].strip(), parts[2].strip()
     elif len(parts) == 2:
         return parts[0].strip(), parts[1].strip()
+    elif payload.upper().startswith("PASS-"):
+        return payload.strip(), None
     return None, None
 

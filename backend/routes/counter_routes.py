@@ -20,6 +20,8 @@ def issue_pass():
     cash_received = data.get("cash_received")
     token_value = data.get("token_value")
     attendee_name = data.get("attendee_name")
+    scanned_qr_payload = data.get("scanned_qr_payload") or data.get("qr_data")
+    custom_pass_id = data.get("custom_pass_id") or data.get("pass_id")
 
     if cash_received is None and token_value is None:
         return jsonify({"error": "Either cash_received or token_value is required"}), 400
@@ -36,6 +38,8 @@ def issue_pass():
             cash_received=cash_val,
             token_value=tok_val,
             attendee_name=attendee_name,
+            scanned_qr_payload=scanned_qr_payload,
+            custom_pass_id=custom_pass_id,
         )
         return jsonify(result), 201
     except ValueError as e:
