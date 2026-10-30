@@ -19,9 +19,7 @@ import {
   User as UserIcon,
   Camera,
   CameraOff,
-  Smartphone,
-  QrCode,
-  X
+  Smartphone
 } from 'lucide-react';
 
 interface Issuance {
@@ -111,23 +109,13 @@ export const CashCounterPage: React.FC = () => {
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Card Scanner state for Issue New Pass tab
-  const [scannedCardPayload, setScannedCardPayload] = useState<string | null>(null);
-  const [isIssueScanning, setIsIssueScanning] = useState(false);
-  const issueQrRegionId = 'issue-card-qr-region';
-  const issueHtml5QrCodeRef = useRef<Html5Qrcode | null>(null);
-  const issueFileInputRef = useRef<HTMLInputElement | null>(null);
-
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Stop scanners on unmount
+  // Stop scanner on unmount
   useEffect(() => {
     return () => {
       if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
         html5QrCodeRef.current.stop().catch(console.error);
-      }
-      if (issueHtml5QrCodeRef.current && issueHtml5QrCodeRef.current.isScanning) {
-        issueHtml5QrCodeRef.current.stop().catch(console.error);
       }
     };
   }, []);
@@ -185,102 +173,6 @@ export const CashCounterPage: React.FC = () => {
     stopScanner();
     setLookupQuery(qrText);
     handleLookupPass(qrText);
-  };
-
-  // Issue Tab Card Scanner Handlers
-  const startIssueScanner = async () => {
-    setError(null);
-    try {
-      if (!issueHtml5QrCodeRef.current) {
-        issueHtml5QrCodeRef.current = new Html5Qrcode(issueQrRegionId);
-      }
-      setIsIssueScanning(true);
-      await issueHtml5QrCodeRef.current.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText) => {
-          handleIssueCardScanned(decodedText);
-        },
-        () => {}
-      );
-    } catch (err: any) {
-      setIsIssueScanning(false);
-      setError('Camera video failed or blocked. Use "Snap Card Photo" or paste code.');
-    }
-  };
-
-  const stopIssueScanner = async () => {
-    if (issueHtml5QrCodeRef.current && issueHtml5QrCodeRef.current.isScanning) {
-      try {
-        await issueHtml5QrCodeRef.current.stop();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    setIsIssueScanning(false);
-  };
-
-  const handleIssueFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    try {
-      if (!issueHtml5QrCodeRef.current) {
-        issueHtml5QrCodeRef.current = new Html5Qrcode(issueQrRegionId);
-      }
-      const decodedText = await issueHtml5QrCodeRef.current.scanFile(file, false);
-      handleIssueCardScanned(decodedText);
-    } catch {
-      setError('Could not detect QR in image. Please ensure photo is clear and well-lit.');
-    } finally {
-      e.target.value = '';
-    }
-  };
-
-  const parseDisplayPassId = (raw: string): string => {
-    if (!raw) return '';
-    if (raw.includes('#id=')) {
-      const parts = raw.split('#id=');
-      if (parts[1]) return parts[1].split('&')[0];
-    }
-    if (raw.includes('?id=')) {
-      const parts = raw.split('?id=');
-      if (parts[1]) return parts[1].split('&')[0];
-    }
-    const colonParts = raw.split(':');
-    if (colonParts.length === 3 && colonParts[0] === 'FEST') {
-      return colonParts[1];
-    }
-    if (colonParts.length === 2 && colonParts[0].toUpperCase().startsWith('PASS-')) {
-      return colonParts[0];
-    }
-    return raw;
-  };
-
-  const handleIssueCardScanned = async (qrText: string) => {
-    await stopIssueScanner();
-    const trimmed = qrText.trim();
-    if (!trimmed) return;
-    setError(null);
-
-    // Check if this pass already exists and is active
-    try {
-      const existing = await apiRequest<PassLookupResult>('/counter/lookup', {
-        method: 'POST',
-        body: JSON.stringify({ pass_identifier: trimmed }),
-      });
-      if (existing && existing.token_pass) {
-        alert(`Notice: Card '${existing.token_pass.public_pass_id}' is already initialized with ${existing.token_pass.remaining_value} Tokens. Switching to Top-Up tab to add more credits.`);
-        setActiveTab('topup');
-        setLookupQuery(trimmed);
-        setLookedUpPass(existing);
-        return;
-      }
-    } catch {
-      // 404 means it's uninitialized -> ready to bind!
-    }
-
-    setScannedCardPayload(trimmed);
   };
 
   // Fetch Config (Rate and Denominations)
@@ -366,11 +258,9 @@ export const CashCounterPage: React.FC = () => {
         body: JSON.stringify({ 
           cash_received: amountVal,
           attendee_name: attendeeName.trim() || undefined,
-          scanned_qr_payload: scannedCardPayload || undefined,
         }),
       });
       setSuccessResult(result);
-      setScannedCardPayload(null);
       fetchSummary();
       fetchHistory();
     } catch (err: any) {
@@ -480,7 +370,6 @@ export const CashCounterPage: React.FC = () => {
 
   const switchTab = (tab: 'issue' | 'topup') => {
     stopScanner();
-    stopIssueScanner();
     setActiveTab(tab);
     setError(null);
   };
@@ -690,7 +579,6 @@ export const CashCounterPage: React.FC = () => {
                       setSuccessResult(null);
                       setAttendeeName('');
                       setCashAmount('100');
-                      setScannedCardPayload(null);
                     }}
                     style={{ flex: 1 }}
                   >
@@ -701,116 +589,6 @@ export const CashCounterPage: React.FC = () => {
               </div>
             ) : (
               <form onSubmit={handleIssuePass}>
-                {/* Pre-Printed Card / QR Badge Option */}
-                <div style={{
-                  background: scannedCardPayload ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-card-elevated)',
-                  border: scannedCardPayload ? '1.5px solid var(--primary)' : '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '1rem',
-                  marginBottom: '1.25rem'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <QrCode size={18} color="var(--primary)" />
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                        Physical Card / QR Badge
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>(Optional)</span>
-                    </div>
-                    {scannedCardPayload && (
-                      <button
-                        type="button"
-                        onClick={() => setScannedCardPayload(null)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#f43f5e',
-                          fontSize: '0.8rem',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.25rem',
-                        }}
-                      >
-                        <X size={14} /> Clear
-                      </button>
-                    )}
-                  </div>
-
-                  {scannedCardPayload ? (
-                    <div style={{
-                      background: 'rgba(16, 185, 129, 0.12)',
-                      border: '1px solid rgba(16, 185, 129, 0.3)',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '0.65rem 0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}>
-                      <div>
-                        <div style={{ fontSize: '0.7rem', color: '#6ee7b7', fontWeight: 600, textTransform: 'uppercase' }}>
-                          ✓ Linked Card To New Wallet
-                        </div>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 700, color: '#f8fafc', marginTop: '0.15rem' }}>
-                          {parseDisplayPassId(scannedCardPayload)}
-                        </div>
-                      </div>
-                      <CheckCircle size={20} color="#10b981" />
-                    </div>
-                  ) : (
-                    <div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.65rem' }}>
-                        Scan pre-printed QR card or wristband to link it, or leave blank to auto-generate a digital pass.
-                      </div>
-
-                      {/* Hidden file input for card photo scan */}
-                      <input
-                        ref={issueFileInputRef}
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        style={{ display: 'none' }}
-                        onChange={handleIssueFileScan}
-                      />
-
-                      <div id={issueQrRegionId} style={{ width: '100%', minHeight: isIssueScanning ? '220px' : '0', overflow: 'hidden', borderRadius: 'var(--radius-sm)', marginBottom: isIssueScanning ? '0.75rem' : '0' }}></div>
-
-                      {!isIssueScanning ? (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                          <button
-                            type="button"
-                            className="btn btn-outline btn-sm"
-                            onClick={() => issueFileInputRef.current?.click()}
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
-                          >
-                            <Smartphone size={15} />
-                            Snap Card Photo
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-sm"
-                            onClick={startIssueScanner}
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
-                          >
-                            <Camera size={15} />
-                            Scan Card Camera
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-sm"
-                          onClick={stopIssueScanner}
-                          style={{ width: '100%' }}
-                        >
-                          <CameraOff size={15} />
-                          Stop Card Scanner
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
                 {/* Optional Attendee Name */}
                 <div className="form-group">
                   <label className="form-label" htmlFor="attendee-name">

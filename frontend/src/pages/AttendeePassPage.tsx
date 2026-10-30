@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { apiRequest } from '../api';
 import { 
   Ticket, 
@@ -7,7 +8,11 @@ import {
   ShoppingBag, 
   RotateCcw, 
   AlertCircle, 
-  Coins
+  Camera,
+  CameraOff,
+  Smartphone,
+  QrCode,
+  Scan
 } from 'lucide-react';
 
 interface PassTransaction {
@@ -43,6 +48,21 @@ export const AttendeePassPage: React.FC<AttendeePassPageProps> = ({ onBackToStaf
 
   const [inputCode, setInputCode] = useState<string>('');
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Scanner state for attendee QR loading
+  const [isScanning, setIsScanning] = useState(false);
+  const scannerRegionId = 'attendee-qr-scanner-region';
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Stop scanner on unmount
+  useEffect(() => {
+    return () => {
+      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+        html5QrCodeRef.current.stop().catch(console.error);
+      }
+    };
+  }, []);
 
   // Extract pass credentials from URL hash / query or localStorage on mount
   useEffect(() => {
@@ -131,31 +151,99 @@ export const AttendeePassPage: React.FC<AttendeePassPageProps> = ({ onBackToStaf
     }
   }, [passData, passId, secret]);
 
-  const handleManualLookup = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputCode.trim()) return;
+  const startScanner = async () => {
+    setError(null);
+    try {
+      if (!html5QrCodeRef.current) {
+        html5QrCodeRef.current = new Html5Qrcode(scannerRegionId);
+      }
+      setIsScanning(true);
+      await html5QrCodeRef.current.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          handleQrScanned(decodedText);
+        },
+        () => {}
+      );
+    } catch (err: any) {
+      setIsScanning(false);
+      setError('Live camera stream unavailable or blocked. Use "Snap QR Photo" below or enter code.');
+    }
+  };
 
+  const stopScanner = async () => {
+    if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+      try {
+        await html5QrCodeRef.current.stop();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setIsScanning(false);
+  };
+
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    try {
+      if (!html5QrCodeRef.current) {
+        html5QrCodeRef.current = new Html5Qrcode(scannerRegionId);
+      }
+      const decodedText = await html5QrCodeRef.current.scanFile(file, false);
+      handleQrScanned(decodedText);
+    } catch {
+      setError('Could not detect QR code in image. Please ensure photo is clear and well-lit.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const extractCredentials = (text: string): { pId: string; pSec: string } => {
     let pId = '';
     let pSec = '';
+    const clean = text.trim();
 
-    const text = inputCode.trim();
-    if (text.includes('#id=') || text.includes('?id=')) {
-      const parts = text.split(/[?#]/)[1];
+    if (clean.includes('#id=') || clean.includes('?id=')) {
+      const parts = clean.split(/[?#]/)[1];
       const params = new URLSearchParams(parts);
       pId = params.get('id') || '';
       pSec = params.get('secret') || '';
-    } else if (text.startsWith('FEST:')) {
-      const split = text.split(':');
+    } else if (clean.startsWith('FEST:')) {
+      const split = clean.split(':');
       if (split.length >= 3) {
         pId = split[1];
         pSec = split[2];
       }
-    } else if (text.includes(':')) {
-      const split = text.split(':');
+    } else if (clean.includes(':')) {
+      const split = clean.split(':');
       pId = split[0];
       pSec = split[1];
     }
+    return { pId: pId.trim(), pSec: pSec.trim() };
+  };
 
+  const handleQrScanned = async (qrText: string) => {
+    await stopScanner();
+    const { pId, pSec } = extractCredentials(qrText);
+    if (!pId || !pSec) {
+      setError('QR scanned does not contain valid pass credentials. Please scan the QR code from the Cash Counter screen.');
+      return;
+    }
+
+    setPassId(pId);
+    setSecret(pSec);
+    setIsLoading(true);
+    localStorage.setItem('festtoken_attendee_pass', JSON.stringify({ id: pId, secret: pSec }));
+    fetchPass(pId, pSec);
+  };
+
+  const handleManualLookup = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputCode.trim()) return;
+
+    const { pId, pSec } = extractCredentials(inputCode);
     if (!pId || !pSec) {
       setError('Invalid format. Please enter format PASS-XXXXXXXX:secret or full pass link.');
       return;
@@ -169,10 +257,15 @@ export const AttendeePassPage: React.FC<AttendeePassPageProps> = ({ onBackToStaf
   };
 
   const handleForgetPass = () => {
+    stopScanner();
     localStorage.removeItem('festtoken_attendee_pass');
     setPassId('');
     setSecret('');
     setPassData(null);
+    setInputCode('');
+    if (window.location.hash || window.location.search) {
+      window.history.pushState({}, '', window.location.pathname);
+    }
   };
 
   return (
@@ -358,59 +451,125 @@ export const AttendeePassPage: React.FC<AttendeePassPageProps> = ({ onBackToStaf
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
-                  style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}
+                  style={{ fontSize: '0.75rem', color: 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
                   onClick={handleForgetPass}
                 >
-                  Switch Pass / Enter Another Code
+                  <Scan size={14} />
+                  Switch Pass / Scan Another QR
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          /* 2. MANUAL LOOKUP IF NO PASS IN URL OR LOCAL STORAGE */
+          /* 2. SCAN QR OR MANUAL LOOKUP IF NO PASS IN URL OR LOCAL STORAGE */
           <div className="card">
-            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
               <div style={{
-                width: '50px',
-                height: '50px',
-                borderRadius: '50%',
-                background: 'rgba(99, 102, 241, 0.15)',
+                width: '56px',
+                height: '56px',
+                borderRadius: '16px',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 margin: '0 auto 0.75rem',
-                color: 'var(--primary)'
+                color: 'var(--primary)',
+                boxShadow: '0 0 20px var(--primary-glow)',
               }}>
-                <Coins size={26} />
+                <QrCode size={28} />
               </div>
               <h2 style={{ fontSize: '1.4rem', marginBottom: '0.25rem' }}>
-                Check Your Token Pass
+                Load Your Token Pass
               </h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                If you received a pass link or code from the cash counter, paste it below to view your live balance and payment QR.
+                Scan the QR code displayed on the Cash Counter screen or printed slip to open your digital wallet.
               </p>
             </div>
 
+            {/* Hidden file input for photo QR scan (bypasses mobile browser camera restriction) */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: 'none' }}
+              onChange={handleFileScan}
+            />
+
+            {/* Camera Viewfinder Region */}
+            <div style={{
+              background: 'var(--bg-card-elevated)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              overflow: 'hidden',
+              marginBottom: '1rem',
+            }}>
+              <div id={scannerRegionId} style={{ width: '100%', minHeight: isScanning ? '250px' : '0' }}></div>
+
+              {!isScanning ? (
+                <div style={{ padding: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.45rem', fontSize: '0.875rem' }}
+                  >
+                    <Smartphone size={18} />
+                    Snap QR Photo
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={startScanner}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.45rem', fontSize: '0.875rem' }}
+                  >
+                    <Camera size={18} />
+                    Scan Live Camera
+                  </button>
+                </div>
+              ) : (
+                <div style={{ padding: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={stopScanner}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                  >
+                    <CameraOff size={16} />
+                    Stop Camera Scanner
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', margin: '1.25rem 0', gap: '0.75rem' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }}></div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Or Enter Code Manually
+              </span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }}></div>
+            </div>
+
             <form onSubmit={handleManualLookup}>
-              <div className="form-group">
-                <label className="form-label">Pass Code or Link</label>
+              <div className="form-group" style={{ marginBottom: '0.85rem' }}>
                 <input
                   type="text"
                   className="input-field"
                   placeholder="e.g. PASS-XXXXXXXX:secret or full URL"
                   value={inputCode}
                   onChange={(e) => setInputCode(e.target.value)}
-                  required
                 />
               </div>
 
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="btn btn-outline"
                 style={{ width: '100%' }}
-                disabled={isLoading}
+                disabled={isLoading || !inputCode.trim()}
               >
-                {isLoading ? 'Checking...' : 'Open My Pass'}
+                {isLoading ? 'Checking...' : 'Open With Code'}
               </button>
             </form>
           </div>

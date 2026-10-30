@@ -12,9 +12,8 @@ const AppContent: React.FC = () => {
   const { user, isLoading } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [viewAttendeePass, setViewAttendeePass] = useState<boolean>(() => {
-    // Check if the current URL points to /pass or contains pass credentials in hash/search
+    // Only automatically open attendee pass if URL has explicit pass credentials in hash or query
     return (
-      window.location.pathname.startsWith('/pass') ||
       window.location.hash.includes('id=') ||
       window.location.search.includes('id=')
     );
@@ -24,11 +23,12 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     const handleLocationCheck = () => {
       if (
-        window.location.pathname.startsWith('/pass') ||
         window.location.hash.includes('id=') ||
         window.location.search.includes('id=')
       ) {
         setViewAttendeePass(true);
+      } else {
+        setViewAttendeePass(false);
       }
     };
 
@@ -74,7 +74,7 @@ const AppContent: React.FC = () => {
         onBackToStaffLogin={() => {
           setViewAttendeePass(false);
           setCurrentTab(user ? (user.role === 'cashier' ? 'counter' : user.role === 'stall_operator' ? 'stall' : 'dashboard') : 'dashboard');
-          if (window.location.pathname.startsWith('/pass')) {
+          if (window.location.pathname.startsWith('/pass') || window.location.hash || window.location.search) {
             window.history.pushState({}, '', '/');
           }
         }}
