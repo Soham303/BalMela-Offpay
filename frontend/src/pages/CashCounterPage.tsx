@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { apiRequest } from '../api';
 import { 
   Coins, 
@@ -15,7 +16,10 @@ import {
   Copy,
   PlusCircle,
   Search,
-  User as UserIcon
+  User as UserIcon,
+  Camera,
+  CameraOff,
+  Smartphone
 } from 'lucide-react';
 
 interface Issuance {
@@ -99,7 +103,77 @@ export const CashCounterPage: React.FC = () => {
   const [recentIssuances, setRecentIssuances] = useState<Issuance[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
+  // Scanner state for cashier top-up
+  const [isScanning, setIsScanning] = useState(false);
+  const cashierQrRegionId = 'cashier-qr-scanner-region';
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Stop scanner on unmount
+  useEffect(() => {
+    return () => {
+      if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+        html5QrCodeRef.current.stop().catch(console.error);
+      }
+    };
+  }, []);
+
+  const startScanner = async () => {
+    setError(null);
+    try {
+      if (!html5QrCodeRef.current) {
+        html5QrCodeRef.current = new Html5Qrcode(cashierQrRegionId);
+      }
+      setIsScanning(true);
+      await html5QrCodeRef.current.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          handleQrScanned(decodedText);
+        },
+        () => {}
+      );
+    } catch (err: any) {
+      setIsScanning(false);
+      setError('Camera video failed or blocked. Use "Snap QR Photo" below or type/paste code.');
+    }
+  };
+
+  const stopScanner = async () => {
+    if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+      try {
+        await html5QrCodeRef.current.stop();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setIsScanning(false);
+  };
+
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    try {
+      if (!html5QrCodeRef.current) {
+        html5QrCodeRef.current = new Html5Qrcode(cashierQrRegionId);
+      }
+      const decodedText = await html5QrCodeRef.current.scanFile(file, false);
+      handleQrScanned(decodedText);
+    } catch {
+      setError('Could not detect QR in image. Please ensure photo is clear and well-lit.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleQrScanned = (qrText: string) => {
+    stopScanner();
+    setLookupQuery(qrText);
+    handleLookupPass(qrText);
+  };
 
   // Fetch Config (Rate and Denominations)
   const fetchConfig = async () => {
@@ -650,9 +724,67 @@ export const CashCounterPage: React.FC = () => {
               </div>
             )}
 
-            {/* Step 1: Search / Scan Input */}
+            {/* Step 1: Scan Attendee Code or Search */}
             <div style={{ marginBottom: '1.25rem' }}>
-              <label className="form-label">Scan Pass QR or Search by Name / ID</label>
+              <label className="form-label">Scan Attendee QR or Search by Name / Pass ID</label>
+
+              {/* Hidden file input for photo QR scan */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: 'none' }}
+                onChange={handleFileScan}
+              />
+
+              {/* Camera Scanner View Area */}
+              <div style={{
+                background: 'var(--bg-card-elevated)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+                marginBottom: '0.75rem',
+              }}>
+                <div id={cashierQrRegionId} style={{ width: '100%', minHeight: isScanning ? '240px' : '0' }}></div>
+                
+                {!isScanning ? (
+                  <div style={{ padding: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                    >
+                      <Smartphone size={16} />
+                      Snap QR Photo
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={startScanner}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                    >
+                      <Camera size={16} />
+                      Open Camera
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ padding: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={stopScanner}
+                      style={{ width: '100%' }}
+                    >
+                      <CameraOff size={16} />
+                      Stop Scanner
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Fallback Text Search Input */}
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <div style={{ position: 'relative', flex: 1 }}>
                   <Search size={18} style={{
@@ -665,7 +797,7 @@ export const CashCounterPage: React.FC = () => {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder="e.g. PASS-XXXXXXXX or Attendee Name"
+                    placeholder="Search Attendee Name or PASS-XXXXXXXX"
                     value={lookupQuery}
                     onChange={(e) => setLookupQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -679,7 +811,7 @@ export const CashCounterPage: React.FC = () => {
                 </div>
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-outline"
                   onClick={() => handleLookupPass()}
                   disabled={isLookingUp || !lookupQuery.trim()}
                 >
