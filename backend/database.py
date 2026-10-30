@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 from sqlalchemy.engine import Engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import StaticPool, NullPool
 
 Base = declarative_base()
 
@@ -30,6 +30,8 @@ def init_db(database_uri, echo=False):
         connect_args["check_same_thread"] = False
         if ":memory:" in database_uri or database_uri == "sqlite://":
             poolclass = StaticPool
+        else:
+            poolclass = NullPool
         
     kwargs = {"echo": echo, "connect_args": connect_args}
     if poolclass:
@@ -39,6 +41,12 @@ def init_db(database_uri, echo=False):
     _SessionFactory = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
     db_session = scoped_session(_SessionFactory)
     return _engine
+
+def close_db(e=None):
+    global db_session
+    if db_session is not None:
+        db_session.remove()
+
 
 
 def get_db():

@@ -3,7 +3,7 @@ from pathlib import Path
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from backend.config import Config, DevelopmentConfig, ProductionConfig, TestingConfig
-from backend.database import init_db, db_session
+from backend.database import init_db, close_db
 
 def create_app(config_class=None):
     if config_class is None:
@@ -41,8 +41,7 @@ def create_app(config_class=None):
     # Database Session Teardown
     @app.teardown_appcontext
     def shutdown_session(exception=None):
-        if db_session is not None:
-            db_session.remove()
+        close_db()
 
     # Health check endpoint
     @app.route("/api/health", methods=["GET"])
