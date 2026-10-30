@@ -8,6 +8,7 @@ class TokenPass(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     public_pass_id = Column(String(36), unique=True, nullable=False, index=True)
+    attendee_name = Column(String(128), nullable=True, index=True)
     credential_hash = Column(String(128), unique=True, nullable=False, index=True)
     issued_value = Column(Integer, nullable=False)
     remaining_value = Column(Integer, nullable=False)
@@ -23,13 +24,18 @@ class TokenPass(Base):
     )
 
     issuer = relationship("User", foreign_keys=[issued_by])
-    issuance = relationship("Issuance", back_populates="token_pass", uselist=False)
+    issuances = relationship("Issuance", back_populates="token_pass", order_by="Issuance.created_at.desc()")
     redemptions = relationship("Redemption", back_populates="token_pass", order_by="Redemption.created_at.desc()")
+
+    @property
+    def issuance(self):
+        return self.issuances[0] if self.issuances else None
 
     def to_dict(self, include_redemptions=False):
         data = {
             "id": self.id,
             "public_pass_id": self.public_pass_id,
+            "attendee_name": self.attendee_name,
             "issued_value": self.issued_value,
             "remaining_value": self.remaining_value,
             "conversion_rate_version": self.conversion_rate_version,

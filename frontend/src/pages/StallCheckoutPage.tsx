@@ -9,10 +9,10 @@ import {
   CheckCircle, 
   AlertCircle, 
   KeyRound, 
-  History, 
   RotateCcw,
-  Sparkles,
-  ArrowRight
+  ArrowRight,
+  ShieldAlert,
+  Smartphone
 } from 'lucide-react';
 
 interface PassInspection {
@@ -55,6 +55,7 @@ export const StallCheckoutPage: React.FC = () => {
   const [scannedQr, setScannedQr] = useState<string>('');
   const [manualCode, setManualCode] = useState<string>('');
   const [showManualInput, setShowManualInput] = useState(false);
+  const [isSecureContext, setIsSecureContext] = useState<boolean>(true);
 
   // Pass Inspection State
   const [passData, setPassData] = useState<PassInspection | null>(null);
@@ -68,11 +69,21 @@ export const StallCheckoutPage: React.FC = () => {
 
   // Stall Stats & History
   const [totalCollected, setTotalCollected] = useState<number>(0);
+  const [totalTransactions, setTotalTransactions] = useState<number>(0);
   const [stallHistory, setStallHistory] = useState<StallTxn[]>([]);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
 
   const qrRegionId = 'html5qr-code-full-region';
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Check if browser context allows camera (HTTPS or localhost)
+  useEffect(() => {
+    const secure = window.isSecureContext || 
+      window.location.hostname === 'localhost' || 
+      window.location.hostname === '127.0.0.1';
+    setIsSecureContext(secure);
+  }, []);
 
   // If admin, load stalls list
   useEffect(() => {
@@ -93,13 +104,14 @@ export const StallCheckoutPage: React.FC = () => {
     const stallIdParam = selectedStallId ? `?stall_id=${selectedStallId}` : '';
     setIsLoadingStats(true);
     try {
-      const summary = await apiRequest<{ total_tokens_collected: number }>(`/stall/summary${stallIdParam}`);
+      const summary = await apiRequest<{ total_tokens_collected: number; transaction_count: number }>(`/stall/summary${stallIdParam}`);
       setTotalCollected(summary.total_tokens_collected || 0);
+      setTotalTransactions(summary.transaction_count || 0);
 
       const history = await apiRequest<{ transactions: StallTxn[] }>(`/stall/transactions${stallIdParam}&limit=15`);
       setStallHistory(history.transactions || []);
     } catch {
-      // Ignore or show error
+      // Ignore
     } finally {
       setIsLoadingStats(false);
     }
@@ -109,6 +121,13 @@ export const StallCheckoutPage: React.FC = () => {
     if (selectedStallId || user?.stall_id) {
       fetchStallData();
     }
+
+    const interval = setInterval(() => {
+      if (selectedStallId || user?.stall_id) {
+        fetchStallData();
+      }
+    }, 4000);
+    return () => clearInterval(interval);
   }, [selectedStallId]);
 
   // Stop scanner on unmount
@@ -120,8 +139,29 @@ export const StallCheckoutPage: React.FC = () => {
     };
   }, []);
 
+  // Live video scanner
   const startScanner = async () => {
     setError(null);
+
+    // 1. Check for secure context on mobile
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      setError(
+        'Mobile browsers require HTTPS for live video streaming. Use "Snap QR Photo" below (works directly on mobile) or open via HTTPS tunnel!'
+      );
+      return;
+    }
+
+    // 2. Request native permission first
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch (permErr: any) {
+      setError('Camera access denied. Please allow camera permissions in your browser or use "Snap QR Photo" below.');
+      return;
+    }
+
     try {
       if (!html5QrCodeRef.current) {
         html5QrCodeRef.current = new Html5Qrcode(qrRegionId);
@@ -143,7 +183,7 @@ export const StallCheckoutPage: React.FC = () => {
       );
     } catch (err: any) {
       setIsScanning(false);
-      setError('Camera access denied or not available. Use manual code entry below.');
+      setError('Camera stream failed to start. Tap "Snap QR Photo" to take a quick photo of the QR code instead.');
     }
   };
 
@@ -156,6 +196,26 @@ export const StallCheckoutPage: React.FC = () => {
       }
     }
     setIsScanning(false);
+  };
+
+  // Image/Photo file QR scan (works on EVERY phone even over HTTP!)
+  const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError(null);
+    try {
+      if (!html5QrCodeRef.current) {
+        html5QrCodeRef.current = new Html5Qrcode(qrRegionId);
+      }
+      const decodedText = await html5QrCodeRef.current.scanFile(file, false);
+      handleQrDetected(decodedText);
+    } catch (err: any) {
+      setError('Could not detect QR in image. Please ensure the QR is clear and well-lit.');
+    } finally {
+      // Clear input so same file can be scanned again if needed
+      e.target.value = '';
+    }
   };
 
   const handleQrDetected = (qrString: string) => {
@@ -208,7 +268,6 @@ export const StallCheckoutPage: React.FC = () => {
     setError(null);
     setIsSubmitting(true);
 
-    // Generate unique idempotency key for this purchase
     const idempotencyKey = `stall-${selectedStallId || user?.stall_id}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     try {
@@ -254,31 +313,40 @@ export const StallCheckoutPage: React.FC = () => {
         <div>
           <h1 style={{ fontSize: '1.85rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <Store className="text-primary" size={28} />
-            Stall Checkout & Redemption
+            Stall Checkout Terminal
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
             {user?.role === 'admin'
               ? 'Administrator Stall Checkout Terminal'
-              : `Operating as: ${user?.stall_name || 'Assigned Stall'} (${user?.stall_code || ''})`}
+              : `Operating: ${user?.stall_name || 'Assigned Stall'} (${user?.stall_code || ''})`}
           </p>
         </div>
 
-        {/* Live Stall Earnings Badge */}
+        {/* Live Stall Earnings Counter Card */}
         <div style={{
-          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%)',
+          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(16, 185, 129, 0.2) 100%)',
           border: '1px solid rgba(99, 102, 241, 0.4)',
           borderRadius: 'var(--radius-lg)',
-          padding: '0.75rem 1.25rem',
+          padding: '0.85rem 1.4rem',
           display: 'flex',
           alignItems: 'center',
-          gap: '1rem',
+          gap: '1.5rem',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
         }}>
           <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Stall Gross Total
+            <div style={{ fontSize: '0.75rem', color: '#a5b4fc', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+              Total Credits Collected
             </div>
-            <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.6rem', fontWeight: 800, color: '#ffffff' }}>
-              {totalCollected} <span style={{ fontSize: '0.9rem', color: '#a5b4fc' }}>Tokens</span>
+            <div style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 900, color: '#ffffff' }}>
+              {totalCollected} <span style={{ fontSize: '1rem', color: 'var(--success)' }}>Tokens</span>
+            </div>
+          </div>
+          <div style={{ borderLeft: '1px solid rgba(255, 255, 255, 0.15)', paddingLeft: '1.25rem' }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+              Transactions
+            </div>
+            <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.6rem', fontWeight: 800, color: '#e0e7ff' }}>
+              {totalTransactions}
             </div>
           </div>
         </div>
@@ -417,22 +485,63 @@ export const StallCheckoutPage: React.FC = () => {
               {/* QR Scanner Camera Area */}
               {!showManualInput ? (
                 <div style={{ marginBottom: '1.25rem' }}>
+                  {/* Invisible file input for mobile native camera capture */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: 'none' }}
+                    onChange={handleFileScan}
+                  />
+
                   <div className="scanner-box">
                     <div id={qrRegionId} style={{ width: '100%', minHeight: isScanning ? '260px' : '0' }}></div>
                     {!isScanning && (
-                      <div style={{ padding: '2.5rem 1rem', textAlign: 'center', background: 'var(--bg-card-elevated)' }}>
+                      <div style={{ padding: '2rem 1rem', textAlign: 'center', background: 'var(--bg-card-elevated)' }}>
                         <Camera size={44} style={{ color: 'var(--text-dim)', marginBottom: '0.75rem' }} />
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                          Position the attendee's QR pass in front of camera
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+                          Scan attendee's token QR pass to verify balance and charge
                         </p>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          onClick={startScanner}
-                        >
-                          <Camera size={18} />
-                          Activate Scanner
-                        </button>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px', margin: '0 auto' }}>
+                          {/* Option A: Snap QR Photo (Works 100% on phones even over HTTP) */}
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => fileInputRef.current?.click()}
+                            title="Open phone camera to snap photo"
+                          >
+                            <Smartphone size={18} />
+                            Snap QR Photo
+                          </button>
+
+                          {/* Option B: Live Video Stream */}
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={startScanner}
+                            title="Stream live video feed"
+                          >
+                            <Camera size={18} />
+                            Live Stream
+                          </button>
+                        </div>
+
+                        {!isSecureContext && (
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            justifyContent: 'center',
+                            fontSize: '0.75rem',
+                            color: '#fbbf24',
+                            marginTop: '1rem',
+                          }}>
+                            <ShieldAlert size={14} />
+                            <span>Mobile on HTTP: Use "Snap QR Photo" for instant permission-free scan</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -478,113 +587,114 @@ export const StallCheckoutPage: React.FC = () => {
                 <div style={{
                   background: 'var(--bg-card-elevated)',
                   border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)',
+                  borderRadius: 'var(--radius-lg)',
                   padding: '1.25rem',
                   marginBottom: '1.25rem',
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Sparkles size={18} color="var(--primary)" />
-                      <span style={{ fontWeight: 700, fontSize: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Pass ID</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 700 }}>
                         {passData.public_pass_id}
-                      </span>
+                      </div>
                     </div>
-                    <span className={`badge ${passData.valid ? 'badge-success' : 'badge-danger'}`}>
+                    <span className={`badge ${passData.status === 'active' ? 'badge-success' : 'badge-danger'}`}>
                       {passData.status}
                     </span>
                   </div>
 
                   <div style={{
                     display: 'flex',
-                    alignItems: 'baseline',
+                    alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: '0.65rem 0.85rem',
-                    background: 'rgba(99, 102, 241, 0.1)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    padding: '0.75rem 1rem',
+                    background: 'rgba(0, 0, 0, 0.25)',
+                    borderRadius: 'var(--radius-md)',
+                    marginBottom: '1rem',
                   }}>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Available Balance:</span>
-                    <span style={{ fontFamily: 'var(--font-heading)', fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>
-                      {passData.remaining_value} <span style={{ fontSize: '0.85rem' }}>Tokens</span>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Available Balance:</span>
+                    <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>
+                      {passData.remaining_value} <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Tokens</span>
                     </span>
                   </div>
+
+                  {/* Charge Input & Quick Buttons */}
+                  <div className="form-group">
+                    <label className="form-label">Tokens to Deduct</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={passData.remaining_value}
+                      className="input-field"
+                      value={chargeAmount}
+                      onChange={(e) => setChargeAmount(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Price Presets */}
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+                    {[20, 30, 50, 80, 100].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        className={`chip-btn ${parseInt(chargeAmount, 10) === amt ? 'active' : ''}`}
+                        onClick={() => setChargeAmount(amt.toString())}
+                        disabled={amt > passData.remaining_value}
+                      >
+                        {amt} T
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ width: '100%' }}
+                    onClick={handleConfirmRedemption}
+                    disabled={isSubmitting || parseInt(chargeAmount, 10) <= 0 || parseInt(chargeAmount, 10) > passData.remaining_value}
+                  >
+                    {isSubmitting ? 'Confirming Transaction...' : `Confirm & Deduct ${chargeAmount} Tokens`}
+                    {!isSubmitting && <ArrowRight size={18} />}
+                  </button>
                 </div>
               )}
-
-              {/* Charge Input & Quick Buttons */}
-              <div className="form-group">
-                <label className="form-label" htmlFor="stall-charge-amount">Charge Amount (Tokens)</label>
-                <input
-                  id="stall-charge-amount"
-                  type="number"
-                  min="1"
-                  className="input-field input-number-lg"
-                  value={chargeAmount}
-                  onChange={(e) => setChargeAmount(e.target.value)}
-                />
-                
-                <div className="chips-container">
-                  {[20, 30, 50, 80, 100, 150].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      className={`chip-btn ${parseInt(chargeAmount, 10) === amt ? 'active' : ''}`}
-                      onClick={() => setChargeAmount(amt.toString())}
-                    >
-                      {amt} Tokens
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Confirm Redemption Action */}
-              <button
-                id="stall-confirm-redemption-btn"
-                type="button"
-                className="btn btn-primary btn-lg"
-                style={{ width: '100%', marginTop: '0.75rem' }}
-                disabled={isSubmitting || !scannedQr || !passData?.valid || parseInt(chargeAmount, 10) <= 0}
-                onClick={handleConfirmRedemption}
-              >
-                {isSubmitting ? 'Confirming with Server...' : `Charge ${chargeAmount || 0} Tokens`}
-                {!isSubmitting && <ArrowRight size={20} />}
-              </button>
             </div>
           )}
         </div>
 
-        {/* Right Column: Stall Collections & Recent Sales History */}
+        {/* Right Column: Stall Transaction History */}
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">
-              <History size={20} />
+              <Store size={20} color="var(--primary)" />
               Recent Stall Collections
             </h2>
             <button
+              type="button"
               className="btn btn-outline btn-sm"
               onClick={fetchStallData}
-              disabled={isLoadingStats}
+              title="Refresh ledger"
             >
-              Refresh
+              <RotateCcw size={14} />
             </button>
           </div>
 
-          <div className="table-responsive" style={{ maxHeight: '480px', overflowY: 'auto' }}>
-            <table>
+          <div className="table-responsive">
+            <table className="data-table">
               <thead>
                 <tr>
                   <th>Ref</th>
-                  <th>Pass ID</th>
+                  <th>Pass</th>
                   <th>Tokens</th>
-                  <th>Status</th>
                   <th>Time</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {stallHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '2rem' }}>
-                      {isLoadingStats ? 'Loading history...' : 'No redemptions recorded for this stall yet.'}
+                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '2.5rem 1rem' }}>
+                      {isLoadingStats ? 'Loading stall records...' : 'No tokens collected yet. Ready for customers!'}
                     </td>
                   </tr>
                 ) : (
@@ -599,13 +709,13 @@ export const StallCheckoutPage: React.FC = () => {
                       <td style={{ fontWeight: 700, color: 'var(--success)' }}>
                         +{txn.amount}
                       </td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {new Date(txn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </td>
                       <td>
                         <span className="badge badge-success">
                           {txn.status}
                         </span>
-                      </td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-                        {new Date(txn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </td>
                     </tr>
                   ))

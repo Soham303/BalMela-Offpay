@@ -12,7 +12,10 @@ import {
   Sparkles,
   ArrowRight,
   ExternalLink,
-  Copy
+  Copy,
+  PlusCircle,
+  Search,
+  User as UserIcon
 } from 'lucide-react';
 
 interface Issuance {
@@ -23,6 +26,7 @@ interface Issuance {
   token_value_issued: number;
   conversion_rate: number;
   cashier_username: string;
+  is_topup?: boolean;
   created_at: string;
   status: 'completed' | 'voided';
 }
@@ -31,6 +35,7 @@ interface IssueResult {
   issuance: Issuance;
   token_pass: {
     public_pass_id: string;
+    attendee_name?: string;
     issued_value: number;
     remaining_value: number;
   };
@@ -38,7 +43,32 @@ interface IssueResult {
   secret: string;
 }
 
+interface PassLookupResult {
+  token_pass: {
+    id: number;
+    public_pass_id: string;
+    attendee_name?: string;
+    issued_value: number;
+    remaining_value: number;
+    status: string;
+    created_at: string;
+  };
+  issuances: Issuance[];
+  redemptions: any[];
+}
+
+interface CashierSummary {
+  total_cash_collected: number;
+  total_tokens_given: number;
+  total_issuances_count: number;
+  total_passes_count: number;
+}
+
 export const CashCounterPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'issue' | 'topup'>('issue');
+
+  // Issue Pass Form State
+  const [attendeeName, setAttendeeName] = useState<string>('');
   const [cashAmount, setCashAmount] = useState<string>('100');
   const [rate, setRate] = useState<number>(1.0);
   const [denominations, setDenominations] = useState<number[]>([20, 50, 100, 200, 500]);
@@ -46,6 +76,26 @@ export const CashCounterPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successResult, setSuccessResult] = useState<IssueResult | null>(null);
 
+  // Top-Up Form State
+  const [lookupQuery, setLookupQuery] = useState<string>('');
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookedUpPass, setLookedUpPass] = useState<PassLookupResult | null>(null);
+  const [topupAmount, setTopupAmount] = useState<string>('100');
+  const [isToppingUp, setIsToppingUp] = useState(false);
+  const [topupSuccessMsg, setTopupSuccessMsg] = useState<string | null>(null);
+
+  // Search suggestions
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  // Summary Metrics State
+  const [summary, setSummary] = useState<CashierSummary>({
+    total_cash_collected: 0,
+    total_tokens_given: 0,
+    total_issuances_count: 0,
+    total_passes_count: 0,
+  });
+
+  // Recent History
   const [recentIssuances, setRecentIssuances] = useState<Issuance[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
@@ -64,6 +114,16 @@ export const CashCounterPage: React.FC = () => {
     }
   };
 
+  // Fetch Summary Counters
+  const fetchSummary = async () => {
+    try {
+      const data = await apiRequest<CashierSummary>('/counter/summary');
+      setSummary(data);
+    } catch (err) {
+      console.error('Failed to fetch cashier summary', err);
+    }
+  };
+
   // Fetch recent issuances
   const fetchHistory = async () => {
     setIsLoadingHistory(true);
@@ -79,7 +139,13 @@ export const CashCounterPage: React.FC = () => {
 
   useEffect(() => {
     fetchConfig();
+    fetchSummary();
     fetchHistory();
+
+    const interval = setInterval(() => {
+      fetchSummary();
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   // Render QR code to canvas whenever a pass is issued
@@ -98,7 +164,9 @@ export const CashCounterPage: React.FC = () => {
   }, [successResult]);
 
   const calculatedTokens = Math.max(0, Math.floor((parseFloat(cashAmount) || 0) / rate));
+  const calculatedTopupTokens = Math.max(0, Math.floor((parseFloat(topupAmount) || 0) / rate));
 
+  // Issue New Pass
   const handleIssuePass = async (e: React.FormEvent) => {
     e.preventDefault();
     const amountVal = parseFloat(cashAmount);
@@ -113,9 +181,13 @@ export const CashCounterPage: React.FC = () => {
     try {
       const result = await apiRequest<IssueResult>('/counter/issue', {
         method: 'POST',
-        body: JSON.stringify({ cash_received: amountVal }),
+        body: JSON.stringify({ 
+          cash_received: amountVal,
+          attendee_name: attendeeName.trim() || undefined
+        }),
       });
       setSuccessResult(result);
+      fetchSummary();
       fetchHistory();
     } catch (err: any) {
       setError(err.error || 'Failed to issue token pass.');
@@ -124,6 +196,83 @@ export const CashCounterPage: React.FC = () => {
     }
   };
 
+  // Lookup Pass for Top-up
+  const handleLookupPass = async (passIdOrQr?: string) => {
+    const query = passIdOrQr || lookupQuery;
+    if (!query.trim()) {
+      setError('Please enter a Pass ID, Name, or scan the QR code.');
+      return;
+    }
+
+    setError(null);
+    setTopupSuccessMsg(null);
+    setIsLookingUp(true);
+
+    try {
+      const data = await apiRequest<PassLookupResult>('/counter/lookup', {
+        method: 'POST',
+        body: JSON.stringify({ pass_identifier: query.trim() }),
+      });
+      setLookedUpPass(data);
+      setSearchResults([]);
+    } catch (err: any) {
+      // If direct lookup fails, try searching by name
+      try {
+        const searchData = await apiRequest<{ passes: any[] }>(`/counter/search?q=${encodeURIComponent(query.trim())}`);
+        if (searchData.passes.length === 1) {
+          // Direct hit
+          handleLookupPass(searchData.passes[0].public_pass_id);
+          return;
+        } else if (searchData.passes.length > 1) {
+          setSearchResults(searchData.passes);
+          setError(`Found ${searchData.passes.length} matching passes. Select one below:`);
+          return;
+        }
+      } catch {}
+
+      setError(err.error || `Could not find pass matching '${query}'.`);
+      setLookedUpPass(null);
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
+
+  // Top-Up Credits on Existing Pass
+  const handleTopupPass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lookedUpPass) return;
+
+    const amountVal = parseFloat(topupAmount);
+    if (!amountVal || amountVal <= 0) {
+      setError('Please enter a valid top-up cash amount.');
+      return;
+    }
+
+    setError(null);
+    setIsToppingUp(true);
+
+    try {
+      const result = await apiRequest<{ new_balance: number; tokens_added: number; message: string }>('/counter/topup', {
+        method: 'POST',
+        body: JSON.stringify({
+          pass_identifier: lookedUpPass.token_pass.public_pass_id,
+          cash_received: amountVal,
+        }),
+      });
+
+      setTopupSuccessMsg(`+${result.tokens_added} Tokens added! New Available Balance: ${result.new_balance} Tokens.`);
+      // Refresh lookup card
+      handleLookupPass(lookedUpPass.token_pass.public_pass_id);
+      fetchSummary();
+      fetchHistory();
+    } catch (err: any) {
+      setError(err.error || 'Failed to top up pass.');
+    } finally {
+      setIsToppingUp(false);
+    }
+  };
+
+  // Void Pass
   const handleVoidPass = async (issuanceId: number) => {
     const reason = window.prompt('Please enter a reason for voiding this issuance:');
     if (!reason || !reason.trim()) return;
@@ -134,6 +283,7 @@ export const CashCounterPage: React.FC = () => {
         body: JSON.stringify({ reason: reason.trim() }),
       });
       alert('Issuance successfully voided.');
+      fetchSummary();
       fetchHistory();
     } catch (err: any) {
       alert(`Error: ${err.error || 'Failed to void pass'}`);
@@ -146,230 +296,534 @@ export const CashCounterPage: React.FC = () => {
 
   return (
     <div className="page-container">
-      <div style={{ marginBottom: '1.75rem' }}>
+      {/* Page Title */}
+      <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: '1.85rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <Coins className="text-primary" size={28} />
-          Cash Counter & Token Issuance
+          Cash Counter & Token Desk
         </h1>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
-          Record collected cash, issue secure QR token passes, and display them to attendees.
+          Issue new QR passes, top up attendee credits on demand, and track cash reconciliation in real time.
         </p>
+      </div>
+
+      {/* Real-Time Cashier Summary Counters */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: '1rem',
+        marginBottom: '1.75rem'
+      }}>
+        <div className="card" style={{
+          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(79, 70, 229, 0.08) 100%)',
+          border: '1px solid rgba(99, 102, 241, 0.3)',
+          padding: '1.25rem',
+        }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Credits Given Away
+          </div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.2rem' }}>
+            {summary.total_tokens_given}
+            <span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 600, marginLeft: '0.4rem' }}>Tokens</span>
+          </div>
+        </div>
+
+        <div className="card" style={{
+          background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.08) 100%)',
+          border: '1px solid rgba(16, 185, 129, 0.3)',
+          padding: '1.25rem',
+        }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Total Cash Collected
+          </div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 800, color: '#ffffff', marginTop: '0.2rem' }}>
+            ₹{summary.total_cash_collected}
+          </div>
+        </div>
+
+        <div className="card" style={{
+          background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.15) 0%, rgba(2, 132, 199, 0.08) 100%)',
+          border: '1px solid rgba(14, 165, 233, 0.3)',
+          padding: '1.25rem',
+        }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Total Operations
+          </div>
+          <div style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 800, color: '#e0e7ff', marginTop: '0.2rem' }}>
+            {summary.total_issuances_count}
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500, marginLeft: '0.4rem' }}>
+              ({summary.total_passes_count} passes)
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Mode Switcher Tabs: Issue New Pass vs Top-Up Pass */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        <button
+          type="button"
+          className={`btn ${activeTab === 'issue' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => { setActiveTab('issue'); setError(null); }}
+        >
+          <Sparkles size={18} />
+          Issue New Pass
+        </button>
+        <button
+          type="button"
+          className={`btn ${activeTab === 'topup' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => { setActiveTab('topup'); setError(null); }}
+        >
+          <PlusCircle size={18} />
+          Top-Up Existing Pass
+        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem' }}>
         
-        {/* Issuance Form & QR Presentation Card */}
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">
-              <Sparkles size={20} color="var(--primary)" />
-              {successResult ? 'Digital Pass Issued' : 'New Token Issuance'}
-            </h2>
-            <span className="badge badge-neutral">Rate: ₹{rate} = 1 Token</span>
-          </div>
-
-          {error && (
-            <div style={{
-              background: 'rgba(244, 63, 94, 0.15)',
-              border: '1px solid rgba(244, 63, 94, 0.3)',
-              borderRadius: 'var(--radius-md)',
-              padding: '0.85rem',
-              color: '#fda4af',
-              fontSize: '0.875rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              marginBottom: '1rem',
-            }}>
-              <AlertCircle size={18} />
-              <span>{error}</span>
+        {/* TAB 1: ISSUE NEW PASS */}
+        {activeTab === 'issue' && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">
+                <Sparkles size={20} color="var(--primary)" />
+                {successResult ? 'Digital Pass Ready' : 'Issue New Token Pass'}
+              </h2>
+              <span className="badge badge-neutral">Rate: ₹{rate} = 1 Token</span>
             </div>
-          )}
 
-          {successResult ? (
-            <div style={{ textAlign: 'center' }}>
+            {error && (
               <div style={{
-                background: 'rgba(16, 185, 129, 0.12)',
+                background: 'rgba(244, 63, 94, 0.15)',
+                border: '1px solid rgba(244, 63, 94, 0.3)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.85rem',
+                color: '#fda4af',
+                fontSize: '0.875rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginBottom: '1rem',
+              }}>
+                <AlertCircle size={18} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {successResult ? (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{
+                  background: 'rgba(16, 185, 129, 0.12)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.65rem 1rem',
+                  color: '#6ee7b7',
+                  fontSize: '0.875rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginBottom: '1rem',
+                }}>
+                  <CheckCircle size={18} />
+                  <span>Pass activated! Present this QR code to the attendee.</span>
+                </div>
+
+                {/* Printable QR Ticket Container */}
+                <div className="qr-display-container">
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    FestToken Pass
+                  </div>
+                  <canvas ref={qrCanvasRef} className="qr-code-canvas"></canvas>
+                  
+                  {successResult.token_pass.attendee_name && (
+                    <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '1.05rem', marginTop: '0.25rem' }}>
+                      {successResult.token_pass.attendee_name}
+                    </div>
+                  )}
+
+                  <div className="qr-pass-label">
+                    {successResult.token_pass.public_pass_id}
+                  </div>
+                  <div className="qr-token-pill">
+                    {successResult.token_pass.issued_value} TOKENS
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.35rem' }}>
+                    Cash Received: ₹{successResult.issuance.cash_received}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#6366f1', marginTop: '0.35rem', fontWeight: 600 }}>
+                    Scan with phone camera to load pass
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => {
+                      const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
+                      window.open(url, '_blank');
+                    }}
+                    title="Open Attendee Pass in New Tab"
+                  >
+                    <ExternalLink size={16} />
+                    Open Pass (Demo)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => {
+                      const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
+                      navigator.clipboard.writeText(url);
+                      alert('Attendee pass link copied to clipboard!');
+                    }}
+                    title="Copy pass link"
+                  >
+                    <Copy size={16} />
+                    Copy Pass Link
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={handlePrint}
+                    style={{ flex: 1 }}
+                  >
+                    <Printer size={18} />
+                    Print Slip
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setSuccessResult(null);
+                      setAttendeeName('');
+                      setCashAmount('100');
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <RotateCcw size={18} />
+                    Next Attendee
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleIssuePass}>
+                {/* Optional Attendee Name */}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="attendee-name">
+                    Attendee Name <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(Optional - for fast lookup)</span>
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <UserIcon size={18} style={{
+                      position: 'absolute',
+                      left: '1rem',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: 'var(--text-dim)'
+                    }} />
+                    <input
+                      id="attendee-name"
+                      type="text"
+                      className="input-field"
+                      placeholder="e.g. Rahul Sharma, Priya (Class 10)"
+                      value={attendeeName}
+                      onChange={(e) => setAttendeeName(e.target.value)}
+                      style={{ paddingLeft: '2.75rem' }}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="cash-amount">Cash Received (₹)</label>
+                  <input
+                    id="cash-amount"
+                    type="number"
+                    min="1"
+                    step="any"
+                    className="input-field"
+                    value={cashAmount}
+                    onChange={(e) => setCashAmount(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {/* Quick Denomination Chips */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.5rem', display: 'block' }}>
+                    Quick Amount Presets:
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {denominations.map((denom) => (
+                      <button
+                        key={denom}
+                        type="button"
+                        className={`chip-btn ${parseFloat(cashAmount) === denom ? 'active' : ''}`}
+                        onClick={() => setCashAmount(denom.toString())}
+                      >
+                        ₹{denom}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Tokens Conversion Output Card */}
+                <div style={{
+                  background: 'var(--bg-card-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '1rem',
+                  marginBottom: '1.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}>
+                  <div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Tokens to Allocate:</div>
+                    <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.75rem', fontWeight: 800, color: 'var(--success)' }}>
+                      {calculatedTokens} <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Tokens</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)', textAlign: 'right' }}>
+                    ₹{cashAmount || '0'} at rate ₹{rate}
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
+                  disabled={isSubmitting || calculatedTokens <= 0}
+                >
+                  {isSubmitting ? 'Issuing Pass...' : `Issue Pass (${calculatedTokens} Tokens)`}
+                  {!isSubmitting && <ArrowRight size={18} />}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: TOP-UP EXISTING PASS */}
+        {activeTab === 'topup' && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="card-title">
+                <PlusCircle size={20} color="var(--primary)" />
+                Top-Up Attendee Credits
+              </h2>
+              <span className="badge badge-neutral">Rate: ₹{rate} = 1 Token</span>
+            </div>
+
+            {error && (
+              <div style={{
+                background: 'rgba(244, 63, 94, 0.15)',
+                border: '1px solid rgba(244, 63, 94, 0.3)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.85rem',
+                color: '#fda4af',
+                fontSize: '0.875rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginBottom: '1rem',
+              }}>
+                <AlertCircle size={18} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {topupSuccessMsg && (
+              <div style={{
+                background: 'rgba(16, 185, 129, 0.15)',
                 border: '1px solid rgba(16, 185, 129, 0.3)',
                 borderRadius: 'var(--radius-md)',
-                padding: '0.65rem 1rem',
+                padding: '0.85rem',
                 color: '#6ee7b7',
                 fontSize: '0.875rem',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
                 marginBottom: '1rem',
               }}>
                 <CheckCircle size={18} />
-                <span>Pass activated! Present this QR code to the attendee.</span>
+                <span>{topupSuccessMsg}</span>
               </div>
+            )}
 
-              {/* Printable QR Ticket Container */}
-              <div className="qr-display-container">
-                <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  FestToken Pass
+            {/* Step 1: Search / Scan Input */}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">Scan Pass QR or Search by Name / ID</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <Search size={18} style={{
+                    position: 'absolute',
+                    left: '1rem',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--text-dim)'
+                  }} />
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. PASS-XXXXXXXX or Attendee Name"
+                    value={lookupQuery}
+                    onChange={(e) => setLookupQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleLookupPass();
+                      }
+                    }}
+                    style={{ paddingLeft: '2.75rem' }}
+                  />
                 </div>
-                <canvas ref={qrCanvasRef} className="qr-code-canvas"></canvas>
-                <div className="qr-pass-label">
-                  {successResult.token_pass.public_pass_id}
-                </div>
-                <div className="qr-token-pill">
-                  {successResult.token_pass.issued_value} TOKENS
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.35rem' }}>
-                  Cash Received: ₹{successResult.issuance.cash_received}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#6366f1', marginTop: '0.35rem', fontWeight: 600 }}>
-                  Scan with phone camera to load your pass
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '1rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => {
-                    const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
-                    window.open(url, '_blank');
-                  }}
-                  title="Open Attendee Pass in New Tab"
-                >
-                  <ExternalLink size={16} />
-                  Open Pass (Demo)
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => {
-                    const url = `${window.location.origin}/pass#id=${successResult.token_pass.public_pass_id}&secret=${successResult.secret}`;
-                    navigator.clipboard.writeText(url);
-                    alert('Attendee pass link copied to clipboard!');
-                  }}
-                  title="Copy pass link"
-                >
-                  <Copy size={16} />
-                  Copy Pass Link
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  onClick={handlePrint}
-                  style={{ flex: 1 }}
-                >
-                  <Printer size={18} />
-                  Print Receipt
-                </button>
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => {
-                    setSuccessResult(null);
-                    setCashAmount('100');
-                  }}
-                  style={{ flex: 1 }}
+                  onClick={() => handleLookupPass()}
+                  disabled={isLookingUp || !lookupQuery.trim()}
                 >
-                  <RotateCcw size={18} />
-                  Issue Next Pass
+                  {isLookingUp ? 'Searching...' : 'Find Pass'}
                 </button>
               </div>
             </div>
-          ) : (
-            <form onSubmit={handleIssuePass}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="cash-input">Cash Collected (₹ INR)</label>
-                <input
-                  id="cash-input"
-                  type="number"
-                  step="any"
-                  className="input-field input-number-lg"
-                  placeholder="0.00"
-                  value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
-                  autoFocus
-                  required
-                />
-                
-                <div className="chips-container">
-                  {denominations.map((denom) => (
+
+            {/* Multiple Search Results Picker */}
+            {searchResults.length > 0 && (
+              <div style={{ marginBottom: '1.25rem', background: 'var(--bg-card-elevated)', borderRadius: 'var(--radius-md)', padding: '0.75rem' }}>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.5rem' }}>
+                  Select the intended attendee:
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {searchResults.map((p) => (
                     <button
-                      key={denom}
+                      key={p.id}
                       type="button"
-                      className={`chip-btn ${parseFloat(cashAmount) === denom ? 'active' : ''}`}
-                      onClick={() => setCashAmount(denom.toString())}
+                      className="btn btn-outline btn-sm"
+                      style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'left' }}
+                      onClick={() => handleLookupPass(p.public_pass_id)}
                     >
-                      +₹{denom}
+                      <span><strong>{p.attendee_name || 'Anonymous'}</strong> ({p.public_pass_id})</span>
+                      <span className="badge badge-success">{p.remaining_value} Tokens</span>
                     </button>
                   ))}
                 </div>
               </div>
+            )}
 
+            {/* Step 2: Found Attendee Card & Top-Up Action */}
+            {lookedUpPass && (
               <div style={{
                 background: 'var(--bg-card-elevated)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '1rem',
-                margin: '1.25rem 0',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                border: '1px solid rgba(99, 102, 241, 0.4)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '1.25rem',
+                marginBottom: '1.5rem',
               }}>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                    Calculated Token Value
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                  <div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ffffff' }}>
+                      {lookedUpPass.token_pass.attendee_name || 'Attendee Pass'}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: '#a5b4fc' }}>
+                      {lookedUpPass.token_pass.public_pass_id}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-                    Based on rate: ₹{rate} / Token
-                  </div>
+                  <span className={`badge ${lookedUpPass.token_pass.status === 'active' ? 'badge-success' : 'badge-danger'}`}>
+                    {lookedUpPass.token_pass.status}
+                  </span>
                 </div>
+
                 <div style={{
-                  fontFamily: 'var(--font-heading)',
-                  fontSize: '2rem',
-                  fontWeight: 800,
-                  color: 'var(--success)'
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '0.75rem',
+                  padding: '0.75rem',
+                  background: 'rgba(0, 0, 0, 0.25)',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: '1rem',
+                  textAlign: 'center',
                 }}>
-                  {calculatedTokens} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>Tokens</span>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Current Balance</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>
+                      {lookedUpPass.token_pass.remaining_value}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Total Issued So Far</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-muted)' }}>
+                      {lookedUpPass.token_pass.issued_value}
+                    </div>
+                  </div>
                 </div>
+
+                <form onSubmit={handleTopupPass}>
+                  <div className="form-group">
+                    <label className="form-label">Top-Up Cash Amount (₹)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="any"
+                      className="input-field"
+                      value={topupAmount}
+                      onChange={(e) => setTopupAmount(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* Preset chips for top-up */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                    {denominations.map((denom) => (
+                      <button
+                        key={denom}
+                        type="button"
+                        className={`chip-btn ${parseFloat(topupAmount) === denom ? 'active' : ''}`}
+                        onClick={() => setTopupAmount(denom.toString())}
+                      >
+                        +₹{denom}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    style={{ width: '100%' }}
+                    disabled={isToppingUp || calculatedTopupTokens <= 0}
+                  >
+                    {isToppingUp ? 'Adding Credits...' : `Add +${calculatedTopupTokens} Tokens (New Balance: ${lookedUpPass.token_pass.remaining_value + calculatedTopupTokens})`}
+                  </button>
+                </form>
               </div>
+            )}
+          </div>
+        )}
 
-              <button
-                id="issue-pass-submit-btn"
-                type="submit"
-                className="btn btn-success btn-lg"
-                style={{ width: '100%' }}
-                disabled={isSubmitting || calculatedTokens <= 0}
-              >
-                {isSubmitting ? 'Generating Digital Pass...' : `Issue ${calculatedTokens} Tokens`}
-                {!isSubmitting && <ArrowRight size={20} />}
-              </button>
-            </form>
-          )}
-        </div>
-
-        {/* Recent Cashier Issuances List */}
+        {/* RECENT COUNTER ISSUANCES & AUDIT LIST */}
         <div className="card">
           <div className="card-header">
             <h2 className="card-title">
-              <Receipt size={20} />
-              Recent Issuances
+              <Receipt size={20} color="var(--primary)" />
+              Recent Counter Transactions
             </h2>
             <button
+              type="button"
               className="btn btn-outline btn-sm"
-              onClick={fetchHistory}
-              disabled={isLoadingHistory}
+              onClick={() => { fetchHistory(); fetchSummary(); }}
+              title="Refresh transaction history"
             >
-              Refresh
+              <RotateCcw size={14} />
             </button>
           </div>
 
-          <div className="table-responsive" style={{ maxHeight: '420px', overflowY: 'auto' }}>
-            <table>
+          <div className="table-responsive">
+            <table className="data-table">
               <thead>
                 <tr>
                   <th>Ref</th>
                   <th>Pass ID</th>
+                  <th>Type</th>
                   <th>Cash</th>
                   <th>Tokens</th>
                   <th>Status</th>
@@ -379,7 +833,7 @@ export const CashCounterPage: React.FC = () => {
               <tbody>
                 {recentIssuances.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '2rem' }}>
+                    <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '2rem' }}>
                       {isLoadingHistory ? 'Loading history...' : 'No issuances recorded yet.'}
                     </td>
                   </tr>
@@ -392,9 +846,16 @@ export const CashCounterPage: React.FC = () => {
                       <td style={{ fontWeight: 600 }}>
                         {iss.public_pass_id}
                       </td>
+                      <td>
+                        {iss.is_topup ? (
+                          <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>Top-Up</span>
+                        ) : (
+                          <span className="badge badge-neutral" style={{ fontSize: '0.7rem' }}>New</span>
+                        )}
+                      </td>
                       <td>₹{iss.cash_received}</td>
                       <td style={{ fontWeight: 700, color: 'var(--success)' }}>
-                        {iss.token_value_issued}
+                        +{iss.token_value_issued}
                       </td>
                       <td>
                         <span className={`badge ${iss.status === 'completed' ? 'badge-success' : 'badge-danger'}`}>
