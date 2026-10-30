@@ -22,6 +22,7 @@ interface PassTransaction {
 
 interface PassDetails {
   public_pass_id: string;
+  attendee_name?: string;
   issued_value: number;
   remaining_value: number;
   status: string;
@@ -252,7 +253,7 @@ export const AttendeePassPage: React.FC<AttendeePassPageProps> = ({ onBackToStaf
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#a5b4fc', fontSize: '0.85rem', fontWeight: 600 }}>
                   <Sparkles size={16} />
-                  <span>Attendee Digital Pass</span>
+                  <span>{passData.attendee_name ? `${passData.attendee_name}'s Pass` : 'Attendee Digital Pass'}</span>
                 </div>
                 <span className={`badge ${passData.remaining_value > 0 ? 'badge-success' : 'badge-danger'}`}>
                   {passData.status}

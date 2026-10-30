@@ -53,6 +53,7 @@ def view_pass():
 
     return jsonify({
         "public_pass_id": pass_obj.public_pass_id,
+        "attendee_name": pass_obj.attendee_name,
         "issued_value": pass_obj.issued_value,
         "remaining_value": pass_obj.remaining_value,
         "status": pass_obj.status,
