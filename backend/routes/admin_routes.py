@@ -432,6 +432,31 @@ def close_event():
         "config": config.to_dict(),
     }), 200
 
+@admin_bp.route("/open-event", methods=["POST"])
+@token_required(allowed_roles=["admin"])
+def open_event():
+    session = get_db()
+    config = session.query(SystemConfig).filter_by(id=1).first()
+    if not config:
+        config = SystemConfig(id=1)
+        session.add(config)
+
+    config.event_status = "active"
+    session.commit()
+
+    log_audit(
+        action="OPEN_EVENT",
+        entity_type="SYSTEM",
+        actor_id=g.current_user.id,
+        entity_id="1",
+        metadata={"status": "active"},
+    )
+
+    return jsonify({
+        "message": "Event is now OPEN. Token issuances and stall redemptions are active.",
+        "config": config.to_dict(),
+    }), 200
+
 @admin_bp.route("/backup", methods=["POST"])
 @token_required(allowed_roles=["admin"])
 def trigger_backup():

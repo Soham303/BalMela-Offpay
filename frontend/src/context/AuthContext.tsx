@@ -25,15 +25,35 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('festtoken_auth_token'));
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('festtoken_user');
-    return saved ? JSON.parse(saved) : null;
+  // Clear any persistent localStorage tokens so opening the link starts fresh on Auth page
+  try {
+    localStorage.removeItem('festtoken_auth_token');
+    localStorage.removeItem('festtoken_user');
+  } catch {}
+
+  const [token, setToken] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('festtoken_auth_token');
+    } catch {
+      return null;
+    }
   });
+
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('festtoken_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isOffline, setIsOffline] = useState<boolean>(false);
 
   const logout = () => {
+    sessionStorage.removeItem('festtoken_auth_token');
+    sessionStorage.removeItem('festtoken_user');
     localStorage.removeItem('festtoken_auth_token');
     localStorage.removeItem('festtoken_user');
     setToken(null);
@@ -41,8 +61,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = (newToken: string, newUser: User) => {
-    localStorage.setItem('festtoken_auth_token', newToken);
-    localStorage.setItem('festtoken_user', JSON.stringify(newUser));
+    sessionStorage.setItem('festtoken_auth_token', newToken);
+    sessionStorage.setItem('festtoken_user', JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
     setIsOffline(false);
@@ -53,7 +73,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const data = await apiRequest<{ user: User }>('/auth/me');
       setUser(data.user);
-      localStorage.setItem('festtoken_user', JSON.stringify(data.user));
+      sessionStorage.setItem('festtoken_user', JSON.stringify(data.user));
       setIsOffline(false);
     } catch (err: any) {
       if (err.status === 401) {

@@ -165,3 +165,16 @@ def test_close_event(test_setup):
     )
     assert issue_res.status_code == 400
     assert "Event is closed" in issue_res.get_json()["error"]
+
+    # Reopen event via /api/admin/open-event
+    open_res = client.post("/api/admin/open-event", headers={"Authorization": f"Bearer {data['admin_token']}"})
+    assert open_res.status_code == 200
+    assert open_res.get_json()["config"]["event_status"] == "active"
+
+    # Issuance should now succeed
+    reissue_res = client.post(
+        "/api/counter/issue",
+        headers={"Authorization": f"Bearer {data['cashier_token']}"},
+        json={"cash_received": 100}
+    )
+    assert reissue_res.status_code == 201

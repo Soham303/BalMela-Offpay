@@ -9,7 +9,7 @@ export async function apiRequest<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = localStorage.getItem('festtoken_auth_token');
+  const token = sessionStorage.getItem('festtoken_auth_token') || localStorage.getItem('festtoken_auth_token');
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -30,6 +30,8 @@ export async function apiRequest<T = any>(
 
     if (response.status === 401) {
       // If unauthorized, clear token if expired or revoked
+      sessionStorage.removeItem('festtoken_auth_token');
+      sessionStorage.removeItem('festtoken_user');
       localStorage.removeItem('festtoken_auth_token');
       localStorage.removeItem('festtoken_user');
       if (!window.location.pathname.includes('/login')) {

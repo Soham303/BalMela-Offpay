@@ -8,8 +8,10 @@ import {
   Download, 
   Database, 
   Lock, 
+  Unlock,
   CheckCircle2, 
   AlertTriangle, 
+  AlertCircle,
   RefreshCw, 
   Search,
   Filter,
@@ -58,11 +60,21 @@ interface TransactionItem {
   created_at: string;
 }
 
+interface SystemConfigData {
+  id: number;
+  event_name: string;
+  event_status: 'active' | 'closed' | string;
+  cash_to_token_rate: number;
+  issuance_started: boolean;
+}
+
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [stalls, setStalls] = useState<StallSummary[]>([]);
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [eventConfig, setEventConfig] = useState<SystemConfigData | null>(null);
+  const [isTogglingEvent, setIsTogglingEvent] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Filters
@@ -87,9 +99,13 @@ export const DashboardPage: React.FC = () => {
       const data = await apiRequest<{
         reconciliation: SummaryData;
         stall_summaries: StallSummary[];
+        config?: SystemConfigData;
       }>('/admin/dashboard');
       setSummary(data.reconciliation);
       setStalls(data.stall_summaries);
+      if (data.config) {
+        setEventConfig(data.config);
+      }
 
       const txnData = await apiRequest<{ transactions: TransactionItem[] }>(
         `/admin/transactions?type=${filterType}&search=${searchTerm}&limit=50`
@@ -122,16 +138,35 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  const handleCloseEvent = async () => {
-    if (!window.confirm('Are you sure you want to CLOSE the event financial ledger? This will permanently disable new token issuances and stall redemptions.')) {
+  const handleOpenEvent = async () => {
+    if (!window.confirm('Are you sure you want to OPEN the event? This will re-enable token issuances at cash counters and stall redemptions.')) {
       return;
     }
+    setIsTogglingEvent(true);
     try {
-      await apiRequest('/admin/close-event', { method: 'POST' });
-      alert('Event has been closed successfully.');
+      await apiRequest('/admin/open-event', { method: 'POST' });
+      alert('Event has been OPENED. Token issuances and stall redemptions are now active!');
       fetchDashboardData();
     } catch (err: any) {
-      alert(`Failed to close event: ${err.error}`);
+      alert(`Failed to open event: ${err.error || 'Server error'}`);
+    } finally {
+      setIsTogglingEvent(false);
+    }
+  };
+
+  const handleCloseEvent = async () => {
+    if (!window.confirm('Are you sure you want to CLOSE the event financial ledger? This will pause new token issuances and stall redemptions.')) {
+      return;
+    }
+    setIsTogglingEvent(true);
+    try {
+      await apiRequest('/admin/close-event', { method: 'POST' });
+      alert('Event has been closed successfully. Token operations are now paused.');
+      fetchDashboardData();
+    } catch (err: any) {
+      alert(`Failed to close event: ${err.error || 'Server error'}`);
+    } finally {
+      setIsTogglingEvent(false);
     }
   };
 
@@ -163,7 +198,7 @@ export const DashboardPage: React.FC = () => {
   };
 
   const handleDownloadCsv = (type: 'transactions' | 'settlement') => {
-    const token = localStorage.getItem('festtoken_auth_token');
+    const token = sessionStorage.getItem('festtoken_auth_token') || localStorage.getItem('festtoken_auth_token');
     window.open(`/api/admin/export/${type}?token=${token}`, '_blank');
   };
 
@@ -179,11 +214,37 @@ export const DashboardPage: React.FC = () => {
         marginBottom: '1.75rem',
       }}>
         <div>
-          <h1 style={{ fontSize: '1.85rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <LayoutDashboard className="text-primary" size={28} />
-            Organizer Settlement & Reconciliation
-          </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '1.85rem', display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0 }}>
+              <LayoutDashboard className="text-primary" size={28} />
+              Organizer Settlement & Reconciliation
+            </h1>
+            {eventConfig && (
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.25rem 0.75rem',
+                borderRadius: '999px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                background: eventConfig.event_status === 'closed' ? 'rgba(244, 63, 94, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                border: `1px solid ${eventConfig.event_status === 'closed' ? 'rgba(244, 63, 94, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`,
+                color: eventConfig.event_status === 'closed' ? '#fda4af' : '#6ee7b7',
+              }}>
+                <span style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  background: eventConfig.event_status === 'closed' ? '#f43f5e' : '#10b981',
+                  boxShadow: `0 0 6px ${eventConfig.event_status === 'closed' ? '#f43f5e' : '#10b981'}`
+                }}></span>
+                {eventConfig.event_status === 'closed' ? 'EVENT CLOSED' : 'EVENT OPEN / ACTIVE'}
+              </span>
+            )}
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginTop: '0.25rem' }}>
             Real-time financial position, stall collections, ledger verification, and exports.
           </p>
         </div>
@@ -219,14 +280,28 @@ export const DashboardPage: React.FC = () => {
           </button>
 
           {user?.role === 'admin' && (
-            <button
-              type="button"
-              className="btn btn-danger btn-sm"
-              onClick={handleCloseEvent}
-            >
-              <Lock size={16} />
-              Close Event
-            </button>
+            eventConfig?.event_status === 'closed' ? (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff' }}
+                onClick={handleOpenEvent}
+                disabled={isTogglingEvent}
+              >
+                <Unlock size={16} />
+                {isTogglingEvent ? 'Opening...' : 'Open Event'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleCloseEvent}
+                disabled={isTogglingEvent}
+              >
+                <Lock size={16} />
+                {isTogglingEvent ? 'Closing...' : 'Close Event'}
+              </button>
+            )
           )}
 
           <button
@@ -239,6 +314,41 @@ export const DashboardPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Closed Event Warning Banner */}
+      {eventConfig?.event_status === 'closed' && (
+        <div style={{
+          background: 'rgba(244, 63, 94, 0.12)',
+          border: '1px solid rgba(244, 63, 94, 0.35)',
+          borderRadius: 'var(--radius-md)',
+          padding: '0.85rem 1.25rem',
+          marginBottom: '1.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          color: '#fda4af',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <AlertCircle size={20} color="#f43f5e" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>
+              <strong>Event Financial Ledger is Closed:</strong> New token issuances at cash counters and stall redemptions are paused.
+            </span>
+          </div>
+          {user?.role === 'admin' && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleOpenEvent}
+              disabled={isTogglingEvent}
+              style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', whiteSpace: 'nowrap' }}
+            >
+              <Unlock size={15} /> Resume / Open Event
+            </button>
+          )}
+        </div>
+      )}
 
       {backupMessage && (
         <div style={{
