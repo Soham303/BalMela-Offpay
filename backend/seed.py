@@ -54,18 +54,19 @@ def seed_database(reset=False):
         ))
         session.commit()
 
-    # 3. Check and seed Cashier
-    cashier = session.query(User).filter_by(username="cashier1").first()
-    if not cashier:
-        cashier = User(
-            username="cashier1",
-            password_hash=hash_password("cashier123"),
-            role="cashier",
-            is_active=True,
-        )
-        session.add(cashier)
-        session.commit()
-        print("Created cashier: username='cashier1', password='cashier123'")
+    # 3. Check and seed 2 Cashiers
+    for c_user in ["cashier1", "cashier2"]:
+        cashier = session.query(User).filter_by(username=c_user).first()
+        if not cashier:
+            cashier = User(
+                username=c_user,
+                password_hash=hash_password("cashier123"),
+                role="cashier",
+                is_active=True,
+            )
+            session.add(cashier)
+            session.commit()
+            print(f"Created cashier: username='{c_user}', password='cashier123'")
 
     # 4. Check and seed Auditor
     auditor = session.query(User).filter_by(username="auditor1").first()
@@ -80,13 +81,12 @@ def seed_database(reset=False):
         session.commit()
         print("Created auditor: username='auditor1', password='auditor123'")
 
-    # 5. Check and seed Sample Stalls & Operators
+    # 5. Check and seed 4 Sample Stalls & Operators
     sample_stalls = [
         ("STALL-01", "Burger & Fries Corner"),
         ("STALL-02", "Artisan Coffee & Chai"),
         ("STALL-03", "Street Tacos & Nachos"),
         ("STALL-04", "Ice Cream & Waffles"),
-        ("STALL-05", "Gaming & VR Arena"),
     ]
     for code, name in sample_stalls:
         stall = session.query(Stall).filter_by(stall_code=code).first()

@@ -203,7 +203,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenAttendeeWallet }) =>
               onClick={() => handleQuickFill('cashier1', 'cashier123')}
               style={{ textAlign: 'center', fontSize: '0.8rem' }}
             >
-              Cashier
+              Cashier 1
+            </button>
+            <button
+              type="button"
+              className="chip-btn"
+              onClick={() => handleQuickFill('cashier2', 'cashier123')}
+              style={{ textAlign: 'center', fontSize: '0.8rem' }}
+            >
+              Cashier 2
             </button>
             <button
               type="button"
@@ -212,6 +220,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenAttendeeWallet }) =>
               style={{ textAlign: 'center', fontSize: '0.8rem' }}
             >
               Stall 01
+            </button>
+            <button
+              type="button"
+              className="chip-btn"
+              onClick={() => handleQuickFill('op_stall_02', 'operator123')}
+              style={{ textAlign: 'center', fontSize: '0.8rem' }}
+            >
+              Stall 02
+            </button>
+            <button
+              type="button"
+              className="chip-btn"
+              onClick={() => handleQuickFill('op_stall_03', 'operator123')}
+              style={{ textAlign: 'center', fontSize: '0.8rem' }}
+            >
+              Stall 03
             </button>
           </div>
         </div>
